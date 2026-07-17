@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Trading Snake — свечная гэмбл-змейка</title>
+<style>
+  :root{
+    --bg:#080b12; --bg2:#0b111c;
+    --panel:#0e1522; --panel2:#131c2c; --panel-brd:#1e2b40;
+    --grid:#141f30; --grid2:#0e1626;
+    --green:#22e0a1; --green-dim:#0f5f47;
+    --red:#ff466e; --red-dim:#6e2138;
+    --gold:#ffce54;
+    --txt:#cdd9e8; --dim:#63758f; --dim2:#40506650;
+    --glass:rgba(14,21,34,.82);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(1200px 700px at 70% -10%, #0f1a2b 0%, transparent 60%),
+      radial-gradient(900px 600px at 10% 110%, #0c1420 0%, transparent 55%),
+      var(--bg);
+    color:var(--txt); font-family:var(--sans);
+    overflow:hidden; -webkit-user-select:none; user-select:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #stage{position:fixed; inset:0; display:flex; flex-direction:column}
+  canvas{display:block; width:100%; height:100%}
+  #cv-wrap{position:relative; flex:1 1 auto; min-height:0}
+
+  /* ---- top HUD ---- */
+  #hud{
+    position:absolute; top:0; left:0; right:0;
+    display:flex; align-items:stretch; gap:1px;
+    background:linear-gradient(180deg, rgba(8,11,18,.9), rgba(8,11,18,0));
+    padding:10px 12px 22px; pointer-events:none; z-index:6;
+  }
+  .stat{flex:1; min-width:0; padding:0 10px}
+  .stat + .stat{border-left:1px solid var(--dim2)}
+  .stat .k{font:600 10px/1 var(--sans); letter-spacing:.14em; text-transform:uppercase; color:var(--dim)}
+  .stat .v{font:700 22px/1.15 var(--mono); font-variant-numeric:tabular-nums; margin-top:5px; color:var(--txt); white-space:nowrap}
+  .stat .v small{font-size:12px; color:var(--dim); font-weight:600}
+  #mult .v{color:var(--gold)}
+  #tleft.warn .v{color:var(--red)}
+  #brand{
+    position:absolute; top:10px; right:14px; z-index:6; text-align:right; pointer-events:none;
+  }
+  #brand .px{display:flex; align-items:baseline; gap:8px; justify-content:flex-end}
+  #brand .px .sym{font:700 10px/1 var(--sans); letter-spacing:.12em; color:var(--dim)}
+  #brand .px b{font:800 20px/1 var(--mono); font-variant-numeric:tabular-nums; color:var(--txt)}
+
+  /* live target progress bar under HUD */
+  #tgtbar{position:absolute; left:12px; right:12px; top:64px; z-index:6; pointer-events:none}
+  #tgtbar .track{height:5px; border-radius:3px; background:var(--grid); overflow:hidden; position:relative}
+  #tgtbar .fill{position:absolute; inset:0 auto 0 0; width:0%; background:linear-gradient(90deg,var(--green),var(--gold)); box-shadow:0 0 12px var(--green); transition:width .08s linear}
+  #tgtbar .lbl{display:flex; justify-content:space-between; font:600 9px/1 var(--mono); letter-spacing:.1em; color:var(--dim); margin-bottom:5px}
+
+  /* ---- overlays ---- */
+  .overlay{
+    position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center;
+    padding:20px; backdrop-filter:blur(3px); background:rgba(4,6,11,.55);
+  }
+  .card{
+    width:min(440px,100%); background:var(--glass); border:1px solid var(--panel-brd);
+    border-radius:20px; padding:22px; box-shadow:0 30px 80px rgba(0,0,0,.6);
+  }
+  .card h1{font:800 26px/1.05 var(--sans); letter-spacing:-.01em; text-wrap:balance}
+  .card h1 em{font-style:normal; color:var(--green)}
+  .card .sub{color:var(--dim); font-size:13px; margin-top:8px; line-height:1.55}
+  .row{margin-top:18px}
+  .row > .k{font:600 10px/1 var(--sans); letter-spacing:.14em; text-transform:uppercase; color:var(--dim); margin-bottom:9px}
+
+  .seg{display:flex; gap:8px}
+  .seg button{
+    flex:1; height:54px; border-radius:12px; cursor:pointer; color:var(--txt);
+    background:var(--panel2); border:1.5px solid var(--panel-brd);
+    font:800 15px/1 var(--sans); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    transition:.12s;
+  }
+  .seg button small{font-weight:600; font-size:10px; color:var(--dim); letter-spacing:.08em}
+  .seg button[data-dir="long"].on{border-color:var(--green); color:var(--green); background:rgba(34,224,161,.1); box-shadow:0 0 0 1px var(--green) inset, 0 6px 20px rgba(34,224,161,.18)}
+  .seg button[data-dir="short"].on{border-color:var(--red); color:var(--red); background:rgba(255,70,110,.1); box-shadow:0 0 0 1px var(--red) inset, 0 6px 20px rgba(255,70,110,.18)}
+
+  .chips{display:flex; gap:8px}
+  .chips button{flex:1; height:44px; border-radius:11px; cursor:pointer; background:var(--panel2); border:1.5px solid var(--panel-brd); color:var(--txt); font:700 14px/1 var(--mono)}
+  .chips button.on{border-color:var(--gold); color:var(--gold); background:rgba(255,206,84,.08)}
+  .chips button:disabled{opacity:.35; cursor:default}
+
+  .slider-head{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px}
+  .slider-head .m{font:800 30px/1 var(--mono); font-variant-numeric:tabular-nums; color:var(--gold)}
+  .slider-head .m span{font-size:16px}
+  .slider-head .win{font:700 13px/1 var(--mono); color:var(--green)}
+  .slider-head .win small{color:var(--dim); font-weight:600; font-size:10px; letter-spacing:.1em; display:block; text-align:right; margin-bottom:3px}
+  input[type=range]{
+    -webkit-appearance:none; appearance:none; width:100%; height:8px; border-radius:5px;
+    background:linear-gradient(90deg,var(--green) 0%,var(--gold) 100%); outline:none; margin:4px 0 2px;
+  }
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:26px; height:26px; border-radius:50%; background:#fff; cursor:pointer; box-shadow:0 3px 12px rgba(0,0,0,.5), 0 0 0 3px rgba(255,255,255,.15)}
+  input[type=range]::-moz-range-thumb{width:26px; height:26px; border:0; border-radius:50%; background:#fff; cursor:pointer}
+  .scale{display:flex; justify-content:space-between; font:600 9px/1 var(--mono); color:var(--dim); letter-spacing:.08em; margin-top:6px}
+  .risk{margin-top:8px; font:600 11px/1.4 var(--sans); color:var(--dim)}
+  .risk b{color:var(--gold)}
+
+  .cta{
+    margin-top:22px; width:100%; height:60px; border:0; border-radius:14px; cursor:pointer;
+    font:800 18px/1 var(--sans); letter-spacing:.01em; color:#04120c;
+    background:linear-gradient(180deg,#3af0b6,#10ac7e);
+    box-shadow:0 10px 34px rgba(34,224,161,.35), inset 0 1px 0 rgba(255,255,255,.4);
+    display:flex; align-items:center; justify-content:center; gap:10px; transition:transform .06s;
+  }
+  .cta:active{transform:translateY(2px)}
+  .cta:disabled{filter:grayscale(.6) brightness(.6); cursor:default; box-shadow:none}
+
+  .legend{display:flex; gap:16px; justify-content:center; margin-top:16px; font:600 11px/1 var(--sans); color:var(--dim)}
+  .legend i{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px}
+  .legend .g i{background:var(--green)} .legend .r i{background:var(--red)}
+
+  /* result card */
+  #result .card{text-align:center}
+  #result .big{font:800 62px/1 var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-.02em; margin:6px 0}
+  #result.win .big{color:var(--green)} #result.lose .big{color:var(--red)}
+  #result .verdict{font:800 16px/1 var(--sans); letter-spacing:.14em; text-transform:uppercase}
+  #result.win .verdict{color:var(--green)} #result.lose .verdict{color:var(--red)}
+  #result .detail{color:var(--dim); font-size:13px; margin-top:12px; line-height:1.6; font-family:var(--mono)}
+  #result .detail b{color:var(--txt)}
+  #result .bal{margin-top:16px; font:700 15px/1 var(--mono); color:var(--txt)}
+  #result .bal small{color:var(--dim); font-weight:600}
+
+  .mutebtn{position:absolute; top:12px; left:14px; z-index:21; width:34px; height:34px; border-radius:9px;
+    background:var(--panel2); border:1px solid var(--panel-brd); color:var(--dim); cursor:pointer; font-size:15px}
+  .hide{display:none !important}
+  .flash{animation:flash .4s ease}
+  @keyframes flash{0%{filter:brightness(2)}100%{filter:none}}
+  @media (max-width:380px){ .stat .v{font-size:18px} .card h1{font-size:22px} }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="cv-wrap">
+    <canvas id="cv"></canvas>
+
+    <div id="hud">
+      <div class="stat" id="length"><div class="k">Длина</div><div class="v">10.0</div></div>
+      <div class="stat" id="mult"><div class="k">Множитель</div><div class="v">×1.00</div></div>
+      <div class="stat" id="tleft"><div class="k">Время</div><div class="v">9.0<small>с</small></div></div>
+    </div>
+    <div id="brand">
+      <div class="px"><span class="sym">BTC/USDT</span><b id="pxval">—</b></div>
+    </div>
+
+    <div id="tgtbar" class="hide">
+      <div class="lbl"><span id="tgtlbl">ЦЕЛЬ ×2.0</span><span id="tgtcur">×1.00</span></div>
+      <div class="track"><div class="fill" id="tgtfill"></div></div>
+    </div>
+
+    <button class="mutebtn" id="mute" title="Звук">🔊</button>
+  </div>
+</div>
+
+<!-- BET SCREEN -->
+<div class="overlay" id="bet">
+  <div class="card">
+    <h1>Запусти <em>змейку</em> по графику</h1>
+    <p class="sub">Свечи <b style="color:var(--txt)">BTC/USDT</b> печатаются вживую. Выбери направление и цель. Змейка ест новые свечи: <b style="color:var(--txt)">свои — растёт, чужие — тает</b>. Дотянет до твоей цели за <b style="color:var(--gold)">30 секунд</b> — забираешь выигрыш. Обнулили или время вышло — ставка сгорела.</p>
+
+    <div class="row">
+      <div class="k">Направление тренда</div>
+      <div class="seg" id="dir">
+        <button data-dir="long" class="on">LONG ▲<small>ешь зелёные</small></button>
+        <button data-dir="short">SHORT ▼<small>ешь красные</small></button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="k">Ставка</div>
+      <div class="chips" id="chips">
+        <button data-bet="10">10</button>
+        <button data-bet="25" class="on">25</button>
+        <button data-bet="50">50</button>
+        <button data-bet="100">100</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="k">Цель — целевой множитель</div>
+      <div class="slider-head">
+        <div class="m" id="mval">×2.0</div>
+        <div class="win"><small>ВОЗМОЖНЫЙ ВЫИГРЫШ</small><span id="pot">50</span></div>
+      </div>
+      <input type="range" id="mslider" min="15" max="100" value="20" step="1" />
+      <div class="scale"><span>×1.5 надёжно</span><span>×10 жадно</span></div>
+      <div class="risk" id="risk">Змейке нужно вырасти до <b>×2.0</b> прежде, чем её обнулят чужие свечи.</div>
+    </div>
+
+    <button class="cta" id="play">ЗАПУСТИТЬ ЗМЕЙКУ</button>
+
+    <div class="legend">
+      <span><i id="lg-food"></i><span id="lg-food-lbl">Ешь зелёные (+)</span></span>
+      <span><i id="lg-danger"></i><span id="lg-danger-lbl">Опасность красные (−)</span></span>
+    </div>
+  </div>
+</div>
+
+<!-- RESULT -->
+<div class="overlay hide" id="result">
+  <div class="card">
+    <div class="verdict" id="rverdict">ВЫИГРЫШ</div>
+    <div class="big" id="rbig">×2.40</div>
+    <div class="detail" id="rdetail"></div>
+    <div class="bal" id="rbal"></div>
+    <button class="cta" id="again" style="margin-top:20px">ЕЩЁ РАЗ</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const $ = s => document.querySelector(s);
+
+  // ---------- state ----------
+  const S = { W:0, H:0, dpr:1 };
+  const G = {
+    phase:'bet',            // bet | run | result
+    balance:1000,
+    dir:'long',             // long => green food ; short => red food
+    bet:25,
+    targetMult:2.0,
+    startLen:10,
+    len:10,
+    mult:1,
+    candles:[],
+    trail:[],               // head positions {x,y}
+    formI:0,                // index of the candle currently forming
+    formT:0,                // seconds elapsed forming current candle
+    lastTick:0,             // how many ticks of current candle have printed
+    runDur:0,               // seconds (LIVE * CANDLE_T)
+    tRun:0,
+    lastT:0,
+    ended:false,
+    settledMult:0,
+    particles:[],
+    floats:[],
+    shake:0,
+    price:0,                // current price shown to the player
+    plot:{x0:0,x1:0,y0:0,y1:0,pmin:0,pmax:1},
+  };
+  // ---- Math derived from volatility (this is what makes it "converge") ----
+  // The instrument's typical candle moves the snake by VOL_UNITS length units. The starting length
+  // is NOT arbitrary — it's BUFFER typical candles: START_LEN = BUFFER × VOL_UNITS. So "how many
+  // candles to double or to zero out" ≈ BUFFER by construction. A single candle is capped below
+  // START_LEN, so nothing resolves on candle 1.
+  const VOL_UNITS = 3.0;                     // typical candle body, in snake-length units
+  const BUFFER    = 4;                       // snake starts this many typical candles long
+  const START_LEN = BUFFER * VOL_UNITS;      // = 12  (derived, not hand-picked)
+  // House edge (no cash-out): you only win by hitting target T, paying stake×T. FACTOR is calibrated
+  // so the best target (×1.5) gives EV≈0.90 (edge 10%); higher targets give the house more.
+  const PAYOUT_FACTOR = 1.17;
+  // DEMO showcase tuning: gently drifts live candles TOWARD the player's chosen side, so same-side
+  // streaks are common and rounds win more often (×1.5≈84%, ×2≈61%, bust≈4%). This makes the game
+  // player-favourable — set to 0 to restore the fair, house-+10% math.
+  const DEMO_FAVOR = 0.20;
+  G.startLen = G.len = START_LEN;
+  const CANDLE_T = 3.0;     // seconds to form one candle
+  const TICKS = 3;          // price ticks per candle — OHLC is built honestly from them
+  const MAX_T = 30;         // hard round limit — timer runs out => auto-loss
+  const HIST = 3;           // short history so the snake can start at the LEFT edge
+  const LIVE = MAX_T/CANDLE_T; // = 10 live candles fill the whole screen in exactly 30s
+  const N = HIST + LIVE;
+  const PX_PER_UNIT = 15;   // trail pixels per length unit
+
+  // ---------- sound ----------
+  let AC=null, muted=false;
+  function actx(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+  function beep(freq, dur=.08, type='square', gain=.05){
+    if(muted) return; const ac=actx(); if(!ac) return;
+    const o=ac.createOscillator(), g=ac.createGain();
+    o.type=type; o.frequency.value=freq; o.connect(g); g.connect(ac.destination);
+    const t=ac.currentTime; g.gain.setValueAtTime(gain,t); g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+    o.start(t); o.stop(t+dur);
+  }
+  function chord(base, dur=.5){ if(muted)return; [1,1.25,1.5].forEach((m,i)=>setTimeout(()=>beep(base*m,dur,'triangle',.06),i*70)); }
+  $('#mute').onclick = () => { muted=!muted; $('#mute').textContent = muted?'🔇':'🔊'; };
+
+  // ---------- sizing ----------
+  function resize(){
+    const wrap = document.getElementById('cv-wrap');
+    S.dpr = Math.min(window.devicePixelRatio||1, 2);
+    S.W = wrap.clientWidth; S.H = wrap.clientHeight;
+    cv.width = S.W*S.dpr; cv.height = S.H*S.dpr;
+    ctx.setTransform(S.dpr,0,0,S.dpr,0,0);
+    computePlot();
+  }
+  window.addEventListener('resize', resize);
+
+  // ---------- chart data: real BTC quotes with a synthetic fallback ----------
+  // eat value = candle body normalised to the screen's average body. Because live candles are
+  // symmetric (see below), len is a martingale in expectation — the edge lives only in PAYOUT_FACTOR.
+  function finalizeEats(c){
+    const bodies=c.map(k=>Math.abs(k.c-k.o));
+    const avg=bodies.reduce((a,b)=>a+b,0)/bodies.length || 1;
+    // eat = candle body scaled to VOL_UNITS, clamped to [0.3, 2.4]×VOL_UNITS. The 2.4× cap keeps a
+    // single candle well under START_LEN (=4 candles), so no round resolves in one candle.
+    c.forEach(k=>{ k.eat=Math.max(0.3*VOL_UNITS, Math.min(2.4*VOL_UNITS, (Math.abs(k.c-k.o)/avg)*VOL_UNITS )); });
+    return c;
+  }
+  function buildSynthetic(){
+    const c=[]; let price=100; const histDrift=(Math.random()*2-1)*1.4;
+    const favor = (G.dir==='long' ? 1 : -1) * DEMO_FAVOR;   // lean live candles toward the player's food
+    for(let i=0;i<N;i++){
+      const o=price, live=i>=HIST;
+      const drift = live ? favor : histDrift;      // LIVE lean = demo generosity (0 => fair edge)
+      const vol = 1.2 + Math.random()*1.6;
+      const r=Math.random();
+      const spike = r<0.15 ? (2+Math.random()) : 1;   // mild only; CAP keeps a single candle tame
+      const ticks=[]; let p=o;
+      for(let j=0;j<TICKS;j++){
+        p += (drift + (Math.random()*2-1)*vol) * spike * 0.8;
+        if(p<20) p=20+Math.random()*3;
+        ticks.push(p);
+      }
+      const cl=ticks[TICKS-1];
+      c.push({ o, c:cl, h:Math.max(o,...ticks), l:Math.min(o,...ticks), ticks,
+               up:cl>=o, eaten:false, pop:0, hist:i<HIST, locked:i<HIST });
+      price=cl;
+    }
+    return finalizeEats(c);
+  }
+  function loadChart(){
+    const c=buildSynthetic();
+    G.candles=c;
+    G.price=c[HIST-1].c;                 // current price at bet time = last history close
+    G.runDur=LIVE*CANDLE_T;
+    computePlot(); updatePriceUI(G.price);
+  }
+  function computePlot(){
+    G.plot.x0 = 20; G.plot.x1 = S.W-20;      // geometry always available, even before data loads
+    G.plot.y0 = 92; G.plot.y1 = S.H-24;
+    // candles march from the LEFT edge with a fixed step; the short history sits at the far left and
+    // the snake's start (index HIST≈18% of width) is near the left, leaving lots of runway on the right.
+    const plotW = G.plot.x1 - G.plot.x0;
+    G.plot.slot   = plotW * 0.058;
+    G.plot.startX = G.plot.x0 + 10;          // candle 0 pinned to the left edge
+    const c=G.candles; if(!c.length) return;
+    // vertical: centre the y-scale on the START price so the snake begins in the MIDDLE height
+    const startPrice = c[HIST].o;
+    let dmin=1e9,dmax=-1e9;
+    c.forEach(k=>{ dmin=Math.min(dmin,k.l); dmax=Math.max(dmax,k.h); });
+    const half = (Math.max(startPrice-dmin, dmax-startPrice) || 1) * 1.14;
+    G.plot.pmin = startPrice-half; G.plot.pmax = startPrice+half;
+  }
+  const cx = i => G.plot.startX + i * G.plot.slot;
+  const py = p => { const {y0,y1,pmin,pmax}=G.plot; return y1 - (p-pmin)/(pmax-pmin)*(y1-y0); };
+  // how many candles are currently visible (future stays hidden, like a live chart)
+  const revealedUpTo = () => (G.phase==='bet') ? HIST-1 : Math.min(N-1, G.formI);
+  // live OHLC of the forming candle at progress p (0..1), built honestly from its real ticks.
+  // price walks linearly through the tick anchors [open, tick0, tick1, tick2]; high/low are the
+  // extremes actually reached so far — nothing is faked ahead of the ticks that have printed.
+  function forming(k, p){
+    const A=[k.o, ...k.ticks];            // TICKS+1 anchors
+    const fp=Math.min(1,p)*TICKS;
+    const seg=Math.min(TICKS-1, Math.floor(fp));
+    const cc=A[seg] + (A[seg+1]-A[seg])*(fp-seg);
+    let hi=k.o, lo=k.o;
+    for(let a=1;a<=seg;a++){ hi=Math.max(hi,A[a]); lo=Math.min(lo,A[a]); }
+    hi=Math.max(hi,cc); lo=Math.min(lo,cc);
+    return { c:cc, h:hi, l:lo, up: cc>=k.o, done: Math.min(TICKS, Math.floor(p*TICKS+1e-9)) };
+  }
+
+  // ---------- bet UI ----------
+  function updateLegend(){
+    const long = G.dir==='long';
+    const food = getCSS(long?'--green':'--red'), danger = getCSS(long?'--red':'--green');
+    $('#lg-food').style.background = food;
+    $('#lg-danger').style.background = danger;
+    $('#lg-food-lbl').textContent = long ? 'Ешь зелёные (+)' : 'Ешь красные (+)';
+    $('#lg-danger-lbl').textContent = long ? 'Опасность красные (−)' : 'Опасность зелёные (−)';
+  }
+  function updateBetUI(){
+    updateLegend();
+    $('#mval').textContent = '×'+G.targetMult.toFixed(1);
+    $('#pot').textContent = Math.round(G.bet*G.targetMult);
+    $('#risk').innerHTML = `Змейке нужно вырасти до <b>×${G.targetMult.toFixed(1)}</b> прежде, чем её обнулят чужие свечи.`;
+    $('#play').textContent = G.balance < G.bet ? 'НЕДОСТАТОЧНО ФИШЕК' : 'ЗАПУСТИТЬ ЗМЕЙКУ';
+    $('#play').disabled = G.balance < G.bet;
+    document.querySelectorAll('#chips button').forEach(b=> b.disabled = (+b.dataset.bet)>G.balance );
+  }
+  document.querySelectorAll('#dir button').forEach(b=> b.onclick=()=>{
+    G.dir=b.dataset.dir; document.querySelectorAll('#dir button').forEach(x=>x.classList.toggle('on',x===b));
+    updateLegend(); if(G.phase==='bet') loadChart(); beep(440,.05);
+  });
+  document.querySelectorAll('#chips button').forEach(b=> b.onclick=()=>{
+    if(b.disabled) return; G.bet=+b.dataset.bet;
+    document.querySelectorAll('#chips button').forEach(x=>x.classList.toggle('on',x===b)); updateBetUI(); beep(520,.05);
+  });
+  $('#mslider').oninput = e=>{ G.targetMult = (+e.target.value)/10; updateBetUI(); };
+  $('#play').onclick = startRun;
+  $('#again').onclick = () => { showBet(); };
+
+  function showBet(){
+    G.phase='bet'; G.ended=false;
+    $('#result').classList.add('hide');
+    $('#bet').classList.remove('hide');
+    $('#tgtbar').classList.add('hide');
+    loadChart();
+    updateBetUI();
+  }
+  function fmtPrice(p){
+    return p>=1000 ? p.toLocaleString('en-US',{maximumFractionDigits:1,minimumFractionDigits:1})
+                   : p.toFixed(2);
+  }
+  function updatePriceUI(p){ G.price=p; const el=$('#pxval'); if(el) el.textContent = '$'+fmtPrice(p); }
+
+  // ---------- run ----------
+  function startRun(){
+    if(G.balance < G.bet) return;
+    actx(); // unlock audio on gesture
+    G.balance -= G.bet;
+    G.phase='run'; G.ended=false;
+    G.len=G.startLen; G.mult=PAYOUT_FACTOR;
+    G.trail=[]; G.formI=HIST; G.formT=0; G.tRun=0; G.lastTick=0; G.particles=[]; G.floats=[]; G.shake=0;
+    G.candles.forEach(k=>{ k.eaten=false; k.pop=0; k.locked=k.hist; });
+    $('#bet').classList.add('hide');
+    $('#tgtbar').classList.remove('hide');
+    $('#tgtlbl').textContent = 'ЦЕЛЬ ×'+G.targetMult.toFixed(1);
+    beep(660,.12,'triangle',.07);
+    G.lastT = performance.now();
+    // seed the tail so it overlays the history line at the launch point
+    for(let i=HIST-1;i>=0;i--) G.trail.push({x:cx(i), y:py(G.candles[i].c)});
+    const y0 = py(G.candles[0].c);
+    for(let k=1;k<=60;k++) G.trail.push({x:cx(0)-k*4, y:y0});
+  }
+
+  const playerFoodUp = () => G.dir==='long'; // long eats green(up) candles
+
+  function lockAndEat(idx){
+    const k=G.candles[idx];
+    k.locked=true; k.eaten=true; k.pop=1;
+    const isFood = (k.up === playerFoodUp());
+    const kx = cx(idx), ky = py(k.c);
+    if(isFood){
+      G.len += k.eat;
+      spawnFloat('+'+k.eat.toFixed(1), kx, ky, 'var(--green)');
+      spawnParticles(kx,ky, getComputedStyle(document.documentElement).getPropertyValue('--green'), 10);
+      beep(600+G.len*4,.06,'square',.045);
+    } else {
+      G.len -= k.eat;
+      spawnFloat('−'+k.eat.toFixed(1), kx, ky, 'var(--red)');
+      spawnParticles(kx,ky, getComputedStyle(document.documentElement).getPropertyValue('--red'), 12);
+      G.shake = Math.min(14, G.shake + k.eat*2.2);
+      beep(200,.09,'sawtooth',.05);
+    }
+    G.mult = G.len/G.startLen * PAYOUT_FACTOR;   // money multiplier = length gain net of house cut
+    if(G.len<=0){ G.len=0; endRun('bust'); return; }
+    if(G.mult >= G.targetMult){ endRun('target'); }
+  }
+
+  function endRun(reason){
+    if(G.ended) return; G.ended=true;
+    G.phase='result';
+    let mult, win=false;
+    if(reason==='bust' || reason==='timeout'){ mult=0; win=false; }
+    else { mult = (reason==='target') ? G.targetMult : G.mult; win = mult>1; }
+    G.settledMult = mult;
+    const payout = Math.round(G.bet*mult);   // mult is already the net money multiplier
+    G.balance += payout;
+
+    const r=$('#result'); r.classList.remove('hide','win','lose'); r.classList.add(win?'win':'lose');
+    $('#rverdict').textContent = reason==='bust' ? 'ОБНУЛЕНИЕ'
+      : reason==='timeout' ? 'ВРЕМЯ ВЫШЛО'
+      : reason==='target' ? 'ЦЕЛЬ ВЗЯТА' : 'ЗАБРАНО';
+    $('#rbig').textContent = '×'+mult.toFixed(2);
+    let d;
+    if(reason==='bust') d = `Чужие свечи обнулили змейку.<br>Ставка <b>${G.bet}</b> — в минус.`;
+    else if(reason==='timeout') d = `Не успел забрать за 30 секунд.<br>Ставка <b>${G.bet}</b> — в минус.`;
+    else d = `Ставка <b>${G.bet}</b> × <b>${mult.toFixed(2)}</b> → <b style="color:var(--green)">+${payout}</b> фишек`;
+    if(reason==='target') d = `Цель взята! ` + d;
+    $('#rdetail').innerHTML=d;
+    $('#rbal').innerHTML = `Баланс <small>·</small> <b>${G.balance}</b> фишек`;
+    if(win){ chord(reason==='target'?520:440,.5); } else { beep(120,.5,'sawtooth',.07); G.shake=22; }
+  }
+
+  // ---------- particles / floats ----------
+  function spawnParticles(x,y,color,n){
+    for(let i=0;i<n;i++){
+      const a=Math.random()*Math.PI*2, sp=1+Math.random()*3.5;
+      G.particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-1,life:1,color:color.trim()});
+    }
+  }
+  function spawnFloat(txt,x,y,color){ G.floats.push({txt,x,y,life:1,color}); }
+
+  // ---------- main loop ----------
+  function frame(now){
+    const dt = Math.min(0.05, (now-(G.lastT||now))/1000); G.lastT=now;
+    if(G.phase==='run' && !G.ended) step(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  function step(dt){
+    G.tRun += dt;
+    G.formT += dt;
+    // hard 30s limit: don't cash out — you failed to. Stake burns.
+    if(G.tRun >= MAX_T){ endRun('timeout'); return; }
+    const k = G.candles[G.formI];
+    const p = Math.min(1, G.formT/CANDLE_T);
+    // head rides the live (ticking) price of the candle being drawn right now
+    const live = forming(k, p);
+    updatePriceUI(live.c);                 // current price = the live ticking close
+    // soft click each time a real tick prints
+    if(live.done > G.lastTick){ G.lastTick = live.done; beep(720+live.done*90,.03,'sine',.025); }
+    const hx = cx(G.formI-1) + (cx(G.formI)-cx(G.formI-1))*p;  // glide toward the printing candle
+    G.trail.unshift({x:hx, y:py(live.c)});
+    if(G.trail.length>1600) G.trail.length=1600;
+    // candle finished forming -> lock it in and let the snake eat it
+    if(G.formT >= CANDLE_T){
+      lockAndEat(G.formI);
+      if(G.ended) return;
+      G.formI++; G.formT = 0; G.lastTick = 0;
+      if(G.formI >= N){ endRun('timeout'); return; }   // ran out the whole screen without cashing
+    }
+    G.mult = G.len/G.startLen * PAYOUT_FACTOR;
+    updateRunHUD();
+    G.shake*=Math.pow(0.001,dt);
+    if(G.shake<0.2) G.shake=0;
+  }
+
+  function updateRunHUD(){
+    $('#length').querySelector('.v').textContent = G.len.toFixed(1);
+    $('#mult').querySelector('.v').textContent = '×'+G.mult.toFixed(2);
+    const tl = Math.max(0, MAX_T-G.tRun);
+    $('#tleft').querySelector('.v').innerHTML = tl.toFixed(1)+'<small>с</small>';
+    $('#tleft').classList.toggle('warn', tl<7);
+    const pct = Math.max(0,Math.min(100, G.mult/G.targetMult*100));
+    $('#tgtfill').style.width = pct+'%';
+    $('#tgtcur').textContent = '×'+G.mult.toFixed(2);
+  }
+
+  // ---------- draw ----------
+  function draw(){
+    ctx.clearRect(0,0,S.W,S.H);
+    if(!G.candles.length){ drawGrid(); return; }   // waiting on the feed
+    ctx.save();
+    if(G.shake>0){ ctx.translate((Math.random()-.5)*G.shake, (Math.random()-.5)*G.shake); }
+    drawGrid();
+    drawCandles();
+    drawPriceLine();
+    if(G.phase==='run'||G.phase==='result') drawSnake();
+    drawParticles();
+    drawFloats();
+    drawCurrentPrice();
+    ctx.restore();
+  }
+
+  // TradingView-style last-price line + label pinned to the right axis
+  function drawCurrentPrice(){
+    if(!G.price) return;
+    const y=py(G.price); const {x0,x1}=G.plot;
+    if(y<G.plot.y0-2 || y>G.plot.y1+2) return;
+    // colour by the direction of the candle currently in play
+    const reveal=revealedUpTo(); const k=G.candles[Math.max(0,Math.min(N-1,reveal))];
+    const p=Math.min(1,G.formT/CANDLE_T);
+    const up = (G.phase==='run' && !k.locked) ? forming(k,p).up : k.up;
+    const col=getCSS(up?'--green':'--red');
+    ctx.save();
+    ctx.globalAlpha=.55; ctx.strokeStyle=col; ctx.lineWidth=1; ctx.setLineDash([5,4]);
+    line(x0,y,x1,y); ctx.setLineDash([]);
+    // label
+    const txt='$'+fmtPrice(G.price);
+    ctx.font='700 11px '+getCSS('--mono'); const tw=ctx.measureText(txt).width;
+    const bw=tw+14, bx=x1-bw, bh=17;
+    ctx.globalAlpha=1; ctx.fillStyle=col;
+    roundRect(bx,y-bh/2,bw,bh,4); ctx.fill();
+    ctx.fillStyle='#04120c'; ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText(txt,bx+7,y+0.5);
+    ctx.textBaseline='alphabetic';
+    ctx.restore();
+  }
+
+  function drawGrid(){
+    const {x0,x1,y0,y1}=G.plot;
+    ctx.lineWidth=1;
+    ctx.strokeStyle=getCSS('--grid');
+    for(let i=0;i<=5;i++){ const y=y0+(y1-y0)*i/5; ctx.globalAlpha=.5; line(x0,y,x1,y); }
+    for(let i=0;i<=8;i++){ const x=x0+(x1-x0)*i/8; ctx.globalAlpha=.3; line(x,y0,x,y1); }
+    ctx.globalAlpha=1;
+  }
+  function drawCandles(){
+    const c=G.candles; const slot=G.plot.slot;
+    const bw=Math.max(3, Math.min(slot*0.62, 12));
+    const foodUp = playerFoodUp();
+    const reveal = revealedUpTo();
+    const p = Math.min(1, G.formT/CANDLE_T);
+    for(let i=0;i<N;i++){
+      if(i>reveal) continue;                     // future candles don't exist yet
+      const k=c[i]; const x=cx(i);
+      // the candle at the live edge is still forming — draw its ticking OHLC
+      const forming_now = (G.phase==='run' && i===G.formI && !k.locked);
+      const d = forming_now ? forming(k,p) : k;
+      const up = forming_now ? d.up : k.up;
+      const isFood = (up===foodUp) && !k.hist;
+      const base = up ? getCSS('--green') : getCSS('--red');
+      const dim  = up ? getCSS('--green-dim') : getCSS('--red-dim');
+      const alpha = k.eaten ? 0.16 : (k.hist ? 0.55 : 1);
+      // wick (high–low): a crisp centred line, always at least a couple of px tall so it reads
+      ctx.globalAlpha=alpha; ctx.strokeStyle=base; ctx.lineWidth=Math.max(1.6, bw*0.16);
+      ctx.beginPath(); ctx.moveTo(x, py(d.h)-1); ctx.lineTo(x, py(d.l)+1); ctx.stroke();
+      // body
+      const yo=py(k.o), yc=py(d.c);
+      const top=Math.min(yo,yc), h=Math.max(2,Math.abs(yc-yo));
+      // live food candle glows; live hazard candle stays a hollow shell so "don't eat" reads
+      if(isFood && !k.eaten && G.phase!=='result'){
+        ctx.shadowColor=base; ctx.shadowBlur=forming_now?16:10; ctx.globalAlpha=alpha; ctx.fillStyle=base;
+      } else if(!k.hist && !isFood && !k.eaten && G.phase!=='result'){
+        ctx.shadowBlur=0; ctx.globalAlpha=alpha*0.5; ctx.fillStyle=dim;
+      } else { ctx.shadowBlur=0; ctx.globalAlpha=alpha; ctx.fillStyle=base; }
+      roundRect(x-bw/2, top, bw, h, 2); ctx.fill();
+      if(!k.hist && !isFood && !k.eaten && G.phase!=='result'){
+        ctx.shadowBlur=0; ctx.globalAlpha=alpha; ctx.strokeStyle=base; ctx.lineWidth=1.4;
+        roundRect(x-bw/2, top, bw, h, 2); ctx.stroke();
+      }
+      // honest tick dots: mark each real tick that has already printed on the forming candle
+      if(forming_now){
+        ctx.shadowBlur=0; ctx.fillStyle=base; ctx.globalAlpha=alpha;
+        for(let a=0;a<d.done;a++){ ctx.beginPath(); ctx.arc(x, py(k.ticks[a]), 2.4, 0, Math.PI*2); ctx.fill(); }
+      }
+      // pop ring at the moment it locks & gets eaten
+      if(k.pop>0){
+        ctx.globalAlpha=k.pop*0.8; ctx.strokeStyle=base; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.arc(x,py(k.c),(1-k.pop)*22+6,0,Math.PI*2); ctx.stroke();
+        k.pop=Math.max(0,k.pop-0.04);
+      }
+    }
+    ctx.globalAlpha=1; ctx.shadowBlur=0;
+    // live-edge marker: a faint vertical scanline where the next candle is printing
+    if(G.phase==='run' && !G.ended){
+      const x=cx(G.formI);
+      ctx.globalAlpha=.25; ctx.strokeStyle=getCSS(foodUp?'--green':'--red');
+      ctx.setLineDash([2,4]); ctx.lineWidth=1; line(x,G.plot.y0,x,G.plot.y1);
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+    }
+  }
+  function drawPriceLine(){
+    const reveal = revealedUpTo(); if(reveal<0) return;
+    const p = Math.min(1, G.formT/CANDLE_T);
+    ctx.globalAlpha=.35; ctx.strokeStyle=getCSS('--dim'); ctx.lineWidth=1; ctx.setLineDash([3,4]);
+    ctx.beginPath();
+    for(let i=0;i<=reveal;i++){
+      const k=G.candles[i];
+      const yc = (G.phase==='run' && i===G.formI && !k.locked) ? py(forming(k,p).c) : py(k.c);
+      i?ctx.lineTo(cx(i),yc):ctx.moveTo(cx(i),yc);
+    }
+    ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha=1;
+  }
+
+  function drawSnake(){
+    const trail=G.trail; if(trail.length<2) return;
+    const foodColor = getCSS(G.dir==='long'?'--green':'--red');
+    const pxLen = G.len*PX_PER_UNIT;
+    // build a DECIMATED body polyline (~1 point / STEP px) so we stroke one path, not thousands of
+    // per-segment shadowed strokes — that per-frame explosion was the lag.
+    const STEP=6; const pts=[trail[0]]; let acc=0, since=0;
+    for(let i=1;i<trail.length && acc<pxLen;i++){
+      const a=trail[i-1], b=trail[i]; const d=Math.hypot(b.x-a.x,b.y-a.y);
+      acc+=d; since+=d;
+      if(since>=STEP || acc>=pxLen){ pts.push(b); since=0; }
+    }
+    if(pts.length<2) return;
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    const trace=()=>{ ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y); for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y); };
+    ctx.strokeStyle=foodColor;
+    ctx.shadowColor=foodColor; ctx.shadowBlur=14; ctx.globalAlpha=.40; ctx.lineWidth=13; trace(); ctx.stroke(); // glow (one stroke)
+    ctx.shadowBlur=0; ctx.globalAlpha=1; ctx.lineWidth=8; trace(); ctx.stroke();                                // core
+    ctx.strokeStyle='rgba(255,255,255,.30)'; ctx.lineWidth=3; trace(); ctx.stroke();                            // highlight
+    ctx.globalAlpha=1;
+    // head
+    const h=pts[0];
+    ctx.fillStyle=foodColor; ctx.shadowColor=foodColor; ctx.shadowBlur=16;
+    ctx.beginPath(); ctx.arc(h.x,h.y,8,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;
+    // eyes facing travel direction (right)
+    ctx.fillStyle='#04120c';
+    ctx.beginPath(); ctx.arc(h.x+3,h.y-3,1.9,0,Math.PI*2); ctx.arc(h.x+3,h.y+3,1.9,0,Math.PI*2); ctx.fill();
+    // progress readout floating above the head — the multiplier is easier to read than snake length
+    if(G.phase==='run'){
+      const txt='×'+G.mult.toFixed(2);
+      let ty=h.y-20; if(ty<G.plot.y0+14) ty=h.y+26;   // flip below if near the top edge
+      ctx.font='800 19px '+getCSS('--mono'); ctx.textAlign='center';
+      ctx.lineWidth=4; ctx.strokeStyle='rgba(4,7,12,.9)'; ctx.strokeText(txt,h.x,ty);
+      ctx.shadowColor=foodColor; ctx.shadowBlur=10; ctx.fillStyle=foodColor;
+      ctx.fillText(txt,h.x,ty); ctx.shadowBlur=0;
+    }
+  }
+
+  function drawParticles(){
+    for(let i=G.particles.length-1;i>=0;i--){
+      const p=G.particles[i]; p.x+=p.vx; p.y+=p.vy; p.vy+=0.15; p.life-=0.03;
+      if(p.life<=0){ G.particles.splice(i,1); continue; }
+      ctx.globalAlpha=p.life; ctx.fillStyle=p.color;
+      ctx.beginPath(); ctx.arc(p.x,p.y,2.4*p.life,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
+  function drawFloats(){
+    ctx.textAlign='center'; ctx.font='700 15px '+getCSS('--mono');
+    for(let i=G.floats.length-1;i>=0;i--){
+      const f=G.floats[i]; f.y-=0.9; f.life-=0.018;
+      if(f.life<=0){ G.floats.splice(i,1); continue; }
+      ctx.globalAlpha=Math.min(1,f.life*1.4);
+      ctx.fillStyle = f.color.startsWith('var')? getCSS(f.color.slice(4,-1)) : f.color;
+      ctx.fillText(f.txt,f.x,f.y);
+    }
+    ctx.globalAlpha=1;
+  }
+
+  // ---------- helpers ----------
+  function line(a,b,c,d){ ctx.beginPath(); ctx.moveTo(a,b); ctx.lineTo(c,d); ctx.stroke(); }
+  function roundRect(x,y,w,h,r){ r=Math.min(r,w/2,h/2); ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+  const cssCache={};
+  function getCSS(v){ if(cssCache[v]!==undefined) return cssCache[v];
+    return cssCache[v]=getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+  // ---------- boot ----------
+  resize();
+  showBet();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
