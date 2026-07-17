@@ -235,7 +235,7 @@
     len:10,
     mult:1,
     candles:[],
-    trail:[],               // head positions {x,y}
+    trail:[],               // head positions {x, p:price} — price space, resolved to y at draw time
     formI:0,                // index of the candle currently forming
     formT:0,                // seconds elapsed forming current candle
     lastTick:0,             // how many ticks of current candle have printed
@@ -248,7 +248,7 @@
     floats:[],
     shake:0,
     price:0,                // current price shown to the player
-    plot:{x0:0,x1:0,y0:0,y1:0,pmin:0,pmax:1},
+    plot:{x0:0,x1:0,y0:0,y1:0,pmin:0,pmax:1,baseHalf:1},
   };
   // ---- Math derived from volatility (this is what makes it "converge") ----
   // The instrument's typical candle moves the snake by VOL_UNITS length units. The starting length
@@ -269,7 +269,7 @@
   const CANDLE_T = 3.0;     // seconds to form one candle
   const TICKS = 3;          // price ticks per candle — OHLC is built honestly from them
   const MAX_T = 30;         // hard round limit — timer runs out => auto-loss
-  const HIST = 3;           // short history so the snake can start at the LEFT edge
+  const HIST = 1;           // a single candle sits at the left edge; everything else prints live
   const LIVE = MAX_T/CANDLE_T; // = 10 live candles fill the whole screen in exactly 30s
   const N = HIST + LIVE;
   const PX_PER_UNIT = 15;   // trail pixels per length unit
@@ -347,12 +347,37 @@
     G.plot.slot   = plotW * 0.058;
     G.plot.startX = G.plot.x0 + 10;          // candle 0 pinned to the left edge
     const c=G.candles; if(!c.length) return;
-    // vertical: centre the y-scale on the START price so the snake begins in the MIDDLE height
+    // vertical scale is DYNAMIC and follows the recent candles (see fitVScale). Here we only seed the
+    // initial window: centred on the start price with a half-range of a few typical candle bodies, so a
+    // sustained one-way run pushes price out of frame and the view pans to follow it.
     const startPrice = c[HIST].o;
-    let dmin=1e9,dmax=-1e9;
-    c.forEach(k=>{ dmin=Math.min(dmin,k.l); dmax=Math.max(dmax,k.h); });
-    const half = (Math.max(startPrice-dmin, dmax-startPrice) || 1) * 1.14;
-    G.plot.pmin = startPrice-half; G.plot.pmax = startPrice+half;
+    const bodies=c.map(k=>Math.abs(k.c-k.o));
+    const avgBody=bodies.reduce((a,b)=>a+b,0)/bodies.length || 1;
+    G.plot.baseHalf = avgBody * 4;                 // min half-range ≈ 4 candles tall (steady zoom)
+    if(G.phase==='bet' || G.plot.pmax<=G.plot.pmin){
+      G.plot.pmin = startPrice - G.plot.baseHalf;
+      G.plot.pmax = startPrice + G.plot.baseHalf;
+    }
+  }
+  // dynamic vertical framing: ease the price window toward the span of the RECENT candles (a trailing
+  // window, so old candles scroll off the top/bottom). This is what lets the chart "go up" through a
+  // run of same-side candles, while baseHalf keeps a steady zoom on quiet stretches.
+  function fitVScale(ease){
+    const rev = revealedUpTo(); if(rev<0) return;
+    const p = Math.min(1, Math.max(0, G.formT/CANDLE_T));   // clamp: never feed forming() a negative progress
+    const from = Math.max(0, rev-4);               // only the last ~5 candles frame the view
+    let lo=1e9, hi=-1e9;
+    for(let i=from;i<=rev;i++){
+      const k=G.candles[i];
+      const d=(G.phase==='run' && i===G.formI && !k.locked) ? forming(k,p) : k;
+      hi=Math.max(hi,d.h); lo=Math.min(lo,d.l);
+    }
+    if(!isFinite(hi) || !isFinite(lo) || hi<lo) return;     // never poison the persistent scale with NaN
+    const mid=(hi+lo)/2;
+    const half=Math.max((hi-lo)/2*1.2, G.plot.baseHalf||1);
+    const e = ease==null ? 0.09 : ease;
+    G.plot.pmin += ((mid-half)-G.plot.pmin)*e;
+    G.plot.pmax += ((mid+half)-G.plot.pmax)*e;
   }
   const cx = i => G.plot.startX + i * G.plot.slot;
   const py = p => { const {y0,y1,pmin,pmax}=G.plot; return y1 - (p-pmin)/(pmax-pmin)*(y1-y0); };
@@ -430,10 +455,12 @@
     $('#tgtlbl').textContent = 'ЦЕЛЬ ×'+G.targetMult.toFixed(1);
     beep(660,.12,'triangle',.07);
     G.lastT = performance.now();
-    // seed the tail so it overlays the history line at the launch point
-    for(let i=HIST-1;i>=0;i--) G.trail.push({x:cx(i), y:py(G.candles[i].c)});
-    const y0 = py(G.candles[0].c);
-    for(let k=1;k<=60;k++) G.trail.push({x:cx(0)-k*4, y:y0});
+    // seed a SHORT lead-in tail (in price space, so it pans with the chart). A short nub means the body
+    // builds up from real head movement instead of dragging a long stiff stub — that stub was the
+    // "laggy tail" at the start. The snake extends to its full length as it moves.
+    for(let i=HIST-1;i>=0;i--) G.trail.push({x:cx(i), p:G.candles[i].c});
+    const p0 = G.candles[0].c;
+    for(let k=1;k<=10;k++) G.trail.push({x:cx(0)-k*4, p:p0});
   }
 
   const playerFoodUp = () => G.dir==='long'; // long eats green(up) candles
@@ -496,7 +523,7 @@
 
   // ---------- main loop ----------
   function frame(now){
-    const dt = Math.min(0.05, (now-(G.lastT||now))/1000); G.lastT=now;
+    const dt = Math.max(0, Math.min(0.05, (now-(G.lastT||now))/1000)); G.lastT=now;  // clamp≥0: a negative step (first frame after start) once produced NaN progress
     if(G.phase==='run' && !G.ended) step(dt);
     draw();
     requestAnimationFrame(frame);
@@ -515,7 +542,7 @@
     // soft click each time a real tick prints
     if(live.done > G.lastTick){ G.lastTick = live.done; beep(720+live.done*90,.03,'sine',.025); }
     const hx = cx(G.formI-1) + (cx(G.formI)-cx(G.formI-1))*p;  // glide toward the printing candle
-    G.trail.unshift({x:hx, y:py(live.c)});
+    G.trail.unshift({x:hx, p:live.c});
     if(G.trail.length>1600) G.trail.length=1600;
     // candle finished forming -> lock it in and let the snake eat it
     if(G.formT >= CANDLE_T){
@@ -525,6 +552,7 @@
       if(G.formI >= N){ endRun('timeout'); return; }   // ran out the whole screen without cashing
     }
     G.mult = G.len/G.startLen * PAYOUT_FACTOR;
+    fitVScale();                 // pan/zoom the view to follow the recent candles
     updateRunHUD();
     G.shake*=Math.pow(0.001,dt);
     if(G.shake<0.2) G.shake=0;
@@ -664,11 +692,15 @@
     const pxLen = G.len*PX_PER_UNIT;
     // build a DECIMATED body polyline (~1 point / STEP px) so we stroke one path, not thousands of
     // per-segment shadowed strokes — that per-frame explosion was the lag.
-    const STEP=6; const pts=[trail[0]]; let acc=0, since=0;
+    // trail points are stored in price space {x, p}; resolve to pixels HERE so the whole body follows
+    // the (animating) vertical scale instead of detaching from the candles.
+    const PT = t => ({x:t.x, y:py(t.p)});
+    const STEP=6; let prevPx=PT(trail[0]); const pts=[prevPx]; let acc=0, since=0;
     for(let i=1;i<trail.length && acc<pxLen;i++){
-      const a=trail[i-1], b=trail[i]; const d=Math.hypot(b.x-a.x,b.y-a.y);
+      const b=PT(trail[i]); const d=Math.hypot(b.x-prevPx.x,b.y-prevPx.y);
       acc+=d; since+=d;
       if(since>=STEP || acc>=pxLen){ pts.push(b); since=0; }
+      prevPx=b;
     }
     if(pts.length<2) return;
     ctx.lineJoin='round'; ctx.lineCap='round';
